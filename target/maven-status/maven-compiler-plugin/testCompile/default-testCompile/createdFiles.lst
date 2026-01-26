@@ -1,0 +1,5 @@
+io/trading/gateway/exchange/okx/OkxMessageParserTest.class
+io/trading/gateway/exchange/binance/SimplePerformanceTest.class
+io/trading/gateway/exchange/bybit/BybitMessageParserTest.class
+io/trading/gateway/exchange/binance/StringComparisonBenchmark.class
+io/trading/gateway/exchange/binance/BinanceMessageParserTest.class

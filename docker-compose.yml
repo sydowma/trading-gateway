@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  trading-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trading-gateway:latest
+    container_name: trading-gateway
+    restart: unless-stopped
+    environment:
+      - GATEWAY_ID=gateway-0
+      - EXCHANGES=binance:true:ticker,trade,book;okx:true:ticker,trade;bybit:true:ticker,trade
+      - SYMBOLS=BTCUSDT:binance,okx,bybit;ETHUSDT:binance,okx
+      - AERON_DIR=/dev/shm/trading-gateway-gateway-0
+      - HEALTH_CHECK_MS=5000
+      - RECONNECT_MAX_RETRIES=10
+    volumes:
+      # Mount shared memory for Aeron IPC
+      - /dev/shm:/dev/shm
+      # Mount logs directory
+      - ./logs:/app/logs
+    # If you need to add custom Java options, use JAVA_OPTS
+    # command: ["sh", "-c", "java $$JAVA_OPTS --enable-preview -jar /app/trading-gateway.jar"]
+
+networks:
+  default:
+    name: trading-gateway-network
