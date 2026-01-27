@@ -1,9 +1,9 @@
 package io.trading.gateway.example;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.aeron.Aeron;
 import io.aeron.Subscription;
 import io.aeron.logbuffer.FragmentHandler;
+import io.trading.gateway.aeron.BinaryDecoder;
 import io.trading.gateway.aeron.StreamRegistry;
 import io.trading.gateway.model.DataType;
 import io.trading.gateway.model.Exchange;
@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * This demonstrates how to:
  * 1. Connect to Aeron IPC
  * 2. Subscribe to specific exchange/data type streams
- * 3. Parse and process JSON market data messages
+ * 3. Decode binary market data messages
  *
  * Usage:
  * <pre>
@@ -41,7 +41,6 @@ public class MarketDataConsumer implements AutoCloseable {
     private final AtomicLong tickerCount = new AtomicLong(0);
     private final AtomicLong tradeCount = new AtomicLong(0);
     private final AtomicLong orderBookCount = new AtomicLong(0);
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * Creates a new market data consumer.
@@ -121,10 +120,7 @@ public class MarketDataConsumer implements AutoCloseable {
             @Override
             public void onFragment(DirectBuffer buffer, int offset, int length, io.aeron.logbuffer.Header header) {
                 try {
-                    byte[] data = new byte[length];
-                    buffer.getBytes(offset, data);
-
-                    Ticker ticker = objectMapper.readValue(data, Ticker.class);
+                    Ticker ticker = BinaryDecoder.decodeTicker(buffer, offset);
                     tickerCount.incrementAndGet();
 
                     // Print ticker info
@@ -137,7 +133,7 @@ public class MarketDataConsumer implements AutoCloseable {
                         ticker.volume24h()
                     );
                 } catch (Exception e) {
-                    System.err.println("Failed to parse ticker: " + e.getMessage());
+                    System.err.println("Failed to decode ticker: " + e.getMessage());
                 }
             }
         }, 10);
@@ -148,10 +144,7 @@ public class MarketDataConsumer implements AutoCloseable {
             @Override
             public void onFragment(DirectBuffer buffer, int offset, int length, io.aeron.logbuffer.Header header) {
                 try {
-                    byte[] data = new byte[length];
-                    buffer.getBytes(offset, data);
-
-                    Trade trade = objectMapper.readValue(data, Trade.class);
+                    Trade trade = BinaryDecoder.decodeTrade(buffer, offset);
                     tradeCount.incrementAndGet();
 
                     // Print trade info
@@ -164,7 +157,7 @@ public class MarketDataConsumer implements AutoCloseable {
                         trade.tradeId()
                     );
                 } catch (Exception e) {
-                    System.err.println("Failed to parse trade: " + e.getMessage());
+                    System.err.println("Failed to decode trade: " + e.getMessage());
                 }
             }
         }, 10);
@@ -175,10 +168,7 @@ public class MarketDataConsumer implements AutoCloseable {
             @Override
             public void onFragment(DirectBuffer buffer, int offset, int length, io.aeron.logbuffer.Header header) {
                 try {
-                    byte[] data = new byte[length];
-                    buffer.getBytes(offset, data);
-
-                    OrderBook orderBook = objectMapper.readValue(data, OrderBook.class);
+                    OrderBook orderBook = BinaryDecoder.decodeOrderBook(buffer, offset);
                     orderBookCount.incrementAndGet();
 
                     // Print order book summary
@@ -195,7 +185,7 @@ public class MarketDataConsumer implements AutoCloseable {
                         );
                     }
                 } catch (Exception e) {
-                    System.err.println("Failed to parse order book: " + e.getMessage());
+                    System.err.println("Failed to decode order book: " + e.getMessage());
                 }
             }
         }, 10);

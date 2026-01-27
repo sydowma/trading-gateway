@@ -11,6 +11,8 @@ import io.netty.handler.codec.http.websocketx.WebSocketClientHandshaker;
 import io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.codec.http.websocketx.WebSocketVersion;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +26,7 @@ import java.util.function.Consumer;
 public class WebSocketClientHandler extends SimpleChannelInboundHandler<Object> {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketClientHandler.class);
+    private static final int TIMEOUT_SECONDS = 30;
 
     private final WebSocketClientHandshaker handshaker;
     private final Consumer<String> messageHandler;
@@ -53,6 +56,11 @@ public class WebSocketClientHandler extends SimpleChannelInboundHandler<Object> 
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
+        LOGGER.debug("Channel active, starting WebSocket handshake");
+        // Add timeout handlers
+        ctx.pipeline().addLast(new ReadTimeoutHandler(TIMEOUT_SECONDS));
+        ctx.pipeline().addLast(new WriteTimeoutHandler(TIMEOUT_SECONDS));
+
         handshaker.handshake(ctx.channel());
     }
 
@@ -66,10 +74,16 @@ public class WebSocketClientHandler extends SimpleChannelInboundHandler<Object> 
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+        LOGGER.debug("Received message type: {}", msg.getClass().getSimpleName());
+
         if (!handshaker.isHandshakeComplete()) {
             try {
+                LOGGER.debug("Completing WebSocket handshake");
                 handshaker.finishHandshake(ctx.channel(), (FullHttpResponse) msg);
-                LOGGER.debug("WebSocket handshake complete");
+                LOGGER.info("WebSocket handshake complete");
+                // Remove timeout handlers after successful handshake
+                ctx.pipeline().remove(ReadTimeoutHandler.class);
+                ctx.pipeline().remove(WriteTimeoutHandler.class);
                 if (connectHandler != null) {
                     connectHandler.run();
                 }
@@ -123,7 +137,7 @@ public class WebSocketClientHandler extends SimpleChannelInboundHandler<Object> 
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        LOGGER.error("WebSocket exception", cause);
+        LOGGER.error("WebSocket exception: {}", cause.getMessage(), cause);
         if (errorHandler != null) {
             errorHandler.accept(cause);
         }

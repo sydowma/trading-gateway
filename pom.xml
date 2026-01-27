@@ -33,6 +33,11 @@
             <artifactId>aeron-client</artifactId>
             <version>${aeron.version}</version>
         </dependency>
+        <dependency>
+            <groupId>io.aeron</groupId>
+            <artifactId>aeron-driver</artifactId>
+            <version>${aeron.version}</version>
+        </dependency>
 
         <!-- Agrona -->
         <dependency>
@@ -48,7 +53,7 @@
             <version>${netty.version}</version>
         </dependency>
 
-        <!-- Jackson -->
+        <!-- Jackson (for JSON fallback) -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

@@ -59,7 +59,8 @@ public class BybitConnector implements ExchangeConnector {
                 this::onMessage,
                 this::onError,
                 this::onConnected,
-                this::onDisconnected
+                this::onDisconnected,
+                false  // Disable compression - Bybit has non-standard permessage-deflate implementation
             );
 
             doConnect();

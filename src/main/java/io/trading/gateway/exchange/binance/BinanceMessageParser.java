@@ -252,7 +252,7 @@ public class BinanceMessageParser {
 
             String symbol = null;
             long timestamp = 0;
-            String tradeId = null;
+            long tradeId = 0;  // Binance sends trade ID as number
             BigDecimal price = BigDecimal.ZERO;
             BigDecimal quantity = BigDecimal.ZERO;
             boolean isBuyerMaker = false;
@@ -269,8 +269,6 @@ public class BinanceMessageParser {
                     case VALUE_STRING:
                         if ("s".equals(fieldName)) {
                             symbol = parser.getValueAsString();
-                        } else if ("t".equals(fieldName)) {
-                            tradeId = parser.getValueAsString();
                         } else if ("p".equals(fieldName)) {
                             price = new BigDecimal(parser.getValueAsString());
                         } else if ("q".equals(fieldName)) {
@@ -280,6 +278,8 @@ public class BinanceMessageParser {
                     case VALUE_NUMBER_INT:
                         if ("E".equals(fieldName)) {
                             timestamp = parser.getLongValue();
+                        } else if ("t".equals(fieldName)) {
+                            tradeId = parser.getLongValue();
                         }
                         break;
                     case VALUE_NUMBER_FLOAT:
@@ -305,12 +305,15 @@ public class BinanceMessageParser {
 
             parser.close();
 
+            // Generate trade ID if not present (use timestamp + sequence)
+            String tradeIdStr = tradeId > 0 ? String.valueOf(tradeId) : String.valueOf(timestamp);
+
             return new Trade(
                 Exchange.BINANCE,
                 symbol,
                 timestamp,
                 System.nanoTime(),
-                tradeId,
+                tradeIdStr,
                 price,
                 quantity,
                 isBuyerMaker ? Side.SELL : Side.BUY

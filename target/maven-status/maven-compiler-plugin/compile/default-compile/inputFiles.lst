@@ -1,5 +1,7 @@
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/TradingGateway.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/aeron/AeronPublisher.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/aeron/BinaryDecoder.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/aeron/BinaryEncoder.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/aeron/MessageEncoder.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/aeron/StreamRegistry.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/config/ExchangeConfig.java

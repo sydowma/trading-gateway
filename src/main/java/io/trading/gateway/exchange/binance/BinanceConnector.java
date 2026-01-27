@@ -25,7 +25,10 @@ public class BinanceConnector implements ExchangeConnector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BinanceConnector.class);
 
+    // Individual streams URL
     private static final String WS_URL = "wss://stream.binance.com:9443/ws";
+    // Combined streams URL (more efficient for multiple subscriptions)
+    private static final String WS_COMBINED_URL = "wss://stream.binance.com:9443/stream";
 
     private final BinanceMessageParser parser = new BinanceMessageParser();
     private final AtomicLong messageCount = new AtomicLong(0);
@@ -60,7 +63,8 @@ public class BinanceConnector implements ExchangeConnector {
                 this::onMessage,
                 this::onError,
                 this::onConnected,
-                this::onDisconnected
+                this::onDisconnected,
+                true  // Enable compression for Binance
             );
 
             doConnect();
@@ -99,39 +103,35 @@ public class BinanceConnector implements ExchangeConnector {
             return;
         }
 
+        // Use combined streams format: {"method":"SUBSCRIBE","params":["btcusdt@ticker","btcusdt@trade"],"id":1}
+        StringBuilder streamsBuilder = new StringBuilder();
         for (String symbol : symbols) {
             String lowerSymbol = symbol.toLowerCase();
 
             if (dataTypes.contains(DataType.TICKER)) {
-                String subscribeMsg = String.format(
-                    "{\"method\":\"SUBSCRIBE\",\"params\":[\"%s@ticker\"],\"id\":%d}",
-                    lowerSymbol,
-                    System.currentTimeMillis()
-                );
-                client.send(subscribeMsg);
-                LOGGER.info("[Binance] Subscribed to ticker for {}", symbol);
+                if (streamsBuilder.length() > 0) streamsBuilder.append("/");
+                streamsBuilder.append(lowerSymbol).append("@ticker");
             }
 
             if (dataTypes.contains(DataType.TRADES)) {
-                String subscribeMsg = String.format(
-                    "{\"method\":\"SUBSCRIBE\",\"params\":[\"%s@trade\"],\"id\":%d}",
-                    lowerSymbol,
-                    System.currentTimeMillis()
-                );
-                client.send(subscribeMsg);
-                LOGGER.info("[Binance] Subscribed to trades for {}", symbol);
+                if (streamsBuilder.length() > 0) streamsBuilder.append("/");
+                streamsBuilder.append(lowerSymbol).append("@trade");
             }
 
             if (dataTypes.contains(DataType.ORDER_BOOK)) {
-                String subscribeMsg = String.format(
-                    "{\"method\":\"SUBSCRIBE\",\"params\":[\"%s@depth\"],\"id\":%d}",
-                    lowerSymbol,
-                    System.currentTimeMillis()
-                );
-                client.send(subscribeMsg);
-                LOGGER.info("[Binance] Subscribed to order book for {}", symbol);
+                if (streamsBuilder.length() > 0) streamsBuilder.append("/");
+                streamsBuilder.append(lowerSymbol).append("@depth");
             }
         }
+
+        // Send combined subscription request
+        String subscribeMsg = String.format(
+            "{\"method\":\"SUBSCRIBE\",\"params\":[\"%s\"],\"id\":%d}",
+            streamsBuilder.toString().replace("/", "\",\""),
+            System.currentTimeMillis()
+        );
+        client.send(subscribeMsg);
+        LOGGER.info("[Binance] Subscribed to streams: {}", streamsBuilder);
     }
 
     @Override

@@ -39,7 +39,7 @@ public class OkxMessageParser {
     // Channel identification
     private static final String CHANNEL_TICKERS = "\"channel\":\"tickers\"";
     private static final String CHANNEL_TRADES = "\"channel\":\"trades\"";
-    private static final String CHANNEL_BOOKS = "\"channel\":\"books\"";
+    private static final String CHANNEL_BOOKS = "\"channel\":\"books";  // Match both "books" and "books5"
 
     // Pre-allocated buffers for OrderBook levels
     private static final int MAX_LEVELS = 50;
@@ -49,15 +49,15 @@ public class OkxMessageParser {
         ThreadLocal.withInitial(() -> new ArrayList<>(MAX_LEVELS));
 
     public boolean isTicker(String message) {
-        return message.indexOf(CHANNEL_TICKERS) > 0;
+        return message.contains(CHANNEL_TICKERS);
     }
 
     public boolean isTrade(String message) {
-        return message.indexOf(CHANNEL_TRADES) > 0;
+        return message.contains(CHANNEL_TRADES);
     }
 
     public boolean isOrderBook(String message) {
-        return message.indexOf(CHANNEL_BOOKS) > 0;
+        return message.contains(CHANNEL_BOOKS);
     }
 
     /**

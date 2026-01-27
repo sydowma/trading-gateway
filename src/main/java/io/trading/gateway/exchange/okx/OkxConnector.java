@@ -59,7 +59,8 @@ public class OkxConnector implements ExchangeConnector {
                 this::onMessage,
                 this::onError,
                 this::onConnected,
-                this::onDisconnected
+                this::onDisconnected,
+                false  // Disable compression for better compatibility
             );
 
             doConnect();
@@ -120,12 +121,13 @@ public class OkxConnector implements ExchangeConnector {
             }
 
             if (dataTypes.contains(DataType.ORDER_BOOK)) {
+                // Use books5 for lighter weight orderbook (top 5 levels)
                 String subscribeMsg = String.format(
-                    "{\"op\":\"subscribe\",\"args\":[{\"channel\":\"books\",\"instId\":\"%s\"}]}",
+                    "{\"op\":\"subscribe\",\"args\":[{\"channel\":\"books5\",\"instId\":\"%s\"}]}",
                     okxSymbol
                 );
                 client.send(subscribeMsg);
-                LOGGER.info("[OKX] Subscribed to order book for {}", symbol);
+                LOGGER.info("[OKX] Subscribed to order book (books5) for {}", symbol);
             }
         }
     }
@@ -202,15 +204,22 @@ public class OkxConnector implements ExchangeConnector {
 
     /**
      * Converts symbol format (e.g., BTCUSDT -> BTC-USDT for OKX).
+     * OKX uses dash separator for spot pairs (e.g., BTC-USDT, ETH-USDT).
      */
     private String convertSymbolToOkxFormat(String symbol) {
-        // OKX uses dash separator for spot pairs
-        // Simple heuristic: insert dash before quote currency
-        if (symbol.endsWith("USDT")) {
-            String base = symbol.substring(0, symbol.length() - 5);
-            return base + "-USDT";
+        // Common quote currencies on OKX
+        String[] quoteCurrencies = {"USDT", "USDC", "BTC", "ETH", "SOL"};
+
+        for (String quote : quoteCurrencies) {
+            if (symbol.endsWith(quote)) {
+                String base = symbol.substring(0, symbol.length() - quote.length());
+                // Ensure base is not empty
+                if (!base.isEmpty()) {
+                    return base + "-" + quote;
+                }
+            }
         }
-        // Default: just return as-is
+        // Default: just return as-is if no match
         return symbol;
     }
 }

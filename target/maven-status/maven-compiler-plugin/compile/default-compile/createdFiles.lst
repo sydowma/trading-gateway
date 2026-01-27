@@ -4,6 +4,7 @@ io/trading/gateway/metrics/MetricsServer$StatusResponse.class
 io/trading/gateway/metrics/MetricsServer$ConfigInfo.class
 io/trading/gateway/netty/WebSocketClient$1.class
 io/trading/gateway/config/GatewayConfig.class
+io/trading/gateway/aeron/BinaryDecoder.class
 io/trading/gateway/aeron/StreamRegistry.class
 io/trading/gateway/exchange/binance/BinanceMessageParser$1.class
 io/trading/gateway/example/MarketDataConsumer.class
@@ -40,6 +41,7 @@ io/trading/gateway/core/HealthMonitor$ConnectionStats.class
 io/trading/gateway/aeron/AeronPublisher$PublicationKey.class
 io/trading/gateway/netty/WebSocketClient.class
 io/trading/gateway/exchange/binance/BinanceMessageParser.class
+io/trading/gateway/aeron/BinaryEncoder.class
 io/trading/gateway/exchange/bybit/BybitMessageParser.class
 io/trading/gateway/config/GatewayConfig$Builder.class
 io/trading/gateway/model/DataType.class

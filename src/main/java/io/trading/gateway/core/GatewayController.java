@@ -1,7 +1,8 @@
 package io.trading.gateway.core;
 
 import io.aeron.Aeron;
-import io.aeron.CommonContext;
+import io.aeron.driver.MediaDriver;
+import io.aeron.driver.ThreadingMode;
 import io.trading.gateway.aeron.AeronPublisher;
 import io.trading.gateway.config.ExchangeConfig;
 import io.trading.gateway.config.GatewayConfig;
@@ -26,6 +27,9 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +41,7 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
     private static final Logger LOGGER = LoggerFactory.getLogger(GatewayController.class);
 
     private final GatewayConfig config;
+    private final MediaDriver mediaDriver;
     private final Aeron aeron;
     private final AeronPublisher publisher;
     private final HealthMonitor healthMonitor;
@@ -44,13 +49,41 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
     private final MetricsServer metricsServer;
     private final Map<Exchange, ExchangeConnector> connectors;
     private final ShutdownSignalBarrier shutdownBarrier;
+    private final ScheduledExecutorService scheduler;
 
     public GatewayController(GatewayConfig config) {
         this.config = config;
 
+        // Start embedded media driver
+        String aeronDir = config.aeronDir();
+
+        // Use temp directory if /dev/shm is not available (e.g., on macOS)
+        if (!java.nio.file.Files.exists(java.nio.file.Paths.get("/dev/shm"))) {
+            aeronDir = System.getProperty("java.io.tmpdir") + "/trading-gateway-" + config.gatewayId();
+            LOGGER.info("Using temp directory for Aeron: {}", aeronDir);
+        }
+
+        // Ensure directory exists
+        try {
+            java.nio.file.Path dirPath = java.nio.file.Paths.get(aeronDir);
+            if (!java.nio.file.Files.exists(dirPath)) {
+                java.nio.file.Files.createDirectories(dirPath);
+            }
+        } catch (java.io.IOException e) {
+            LOGGER.warn("Could not create Aeron directory: {}", aeronDir, e);
+        }
+
+        MediaDriver.Context mediaDriverContext = new MediaDriver.Context()
+            .aeronDirectoryName(aeronDir)
+            .threadingMode(ThreadingMode.SHARED)
+            .dirDeleteOnStart(true);
+
+        this.mediaDriver = MediaDriver.launchEmbedded(mediaDriverContext);
+        LOGGER.info("Media driver started: dir={}", aeronDir);
+
         // Configure Aeron context
         Aeron.Context context = new Aeron.Context()
-            .aeronDirectoryName(config.aeronDir())
+            .aeronDirectoryName(mediaDriver.aeronDirectoryName())
             .useConductorAgentInvoker(true);
 
         this.aeron = Aeron.connect(context);
@@ -60,6 +93,7 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
         this.metricsServer = new MetricsServer(config.metricsPort(), metrics, config, healthMonitor);
         this.connectors = new HashMap<>();
         this.shutdownBarrier = new ShutdownSignalBarrier();
+        this.scheduler = Executors.newScheduledThreadPool(2);
 
         LOGGER.info("Gateway controller initialized: {}", config.gatewayId());
     }
@@ -110,30 +144,42 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
                     }
                 );
 
+                // Schedule subscription retry every 2 seconds until connected
+                scheduleSubscriptionRetry(connector, exchangeConfig.exchange());
+
                 LOGGER.info("Started connector for {}", exchangeConfig.exchange());
-            }
-        }
-
-        // Subscribe to symbols
-        for (SymbolConfig symbolConfig : config.symbolConfigs()) {
-            for (Exchange exchange : symbolConfig.exchanges()) {
-                ExchangeConnector connector = connectors.get(exchange);
-                if (connector != null && connector.isConnected()) {
-                    // Find data types for this exchange
-                    Set<DataType> dataTypes = config.exchangeConfigs().stream()
-                        .filter(ec -> ec.exchange() == exchange)
-                        .flatMap(ec -> ec.dataTypes().stream())
-                        .collect(Collectors.toSet());
-
-                    connector.subscribe(java.util.Set.of(symbolConfig.symbol()), dataTypes);
-                    LOGGER.info("Subscribed {}:{} for data types: {}",
-                        exchange, symbolConfig.symbol(), dataTypes);
-                }
             }
         }
 
         LOGGER.info("Trading Gateway started successfully");
         logStatus();
+    }
+
+    /**
+     * Schedules periodic subscription retries until the connector is connected.
+     */
+    private void scheduleSubscriptionRetry(ExchangeConnector connector, Exchange exchange) {
+        scheduler.scheduleAtFixedRate(() -> {
+            if (connector.isConnected()) {
+                // Already connected, try subscriptions and cancel if successful
+                Set<SymbolConfig> symbolConfigs = config.symbolConfigs().stream()
+                    .filter(sc -> sc.exchanges().contains(exchange))
+                    .collect(Collectors.toSet());
+
+                if (!symbolConfigs.isEmpty()) {
+                    Set<DataType> dataTypes = config.exchangeConfigs().stream()
+                        .filter(ec -> ec.exchange() == exchange)
+                        .flatMap(ec -> ec.dataTypes().stream())
+                        .collect(Collectors.toSet());
+
+                    for (SymbolConfig symbolConfig : symbolConfigs) {
+                        connector.subscribe(java.util.Set.of(symbolConfig.symbol()), dataTypes);
+                        LOGGER.info("[{}] Subscribed to {} for data types: {}",
+                            exchange, symbolConfig.symbol(), dataTypes);
+                    }
+                }
+            }
+        }, 0, 2, TimeUnit.SECONDS);
     }
 
     /**
@@ -152,6 +198,16 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
     public void shutdown() {
         LOGGER.info("Shutting down Trading Gateway...");
 
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
         CloseHelper.closeAll(publisher, healthMonitor, metricsServer);
         for (ExchangeConnector connector : connectors.values()) {
             try {
@@ -162,6 +218,7 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
         }
         connectors.clear();
         CloseHelper.close(aeron);
+        CloseHelper.close(mediaDriver);
 
         LOGGER.info("Trading Gateway shutdown complete");
     }

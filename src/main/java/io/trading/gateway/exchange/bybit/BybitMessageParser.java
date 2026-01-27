@@ -88,9 +88,20 @@ public class BybitMessageParser {
                 switch (token) {
                     case FIELD_NAME:
                         fieldName = parser.getCurrentName();
+
+                        // Extract symbol from topic as fallback
+                        if ("topic".equals(fieldName)) {
+                            parser.nextToken();
+                            String topic = parser.getValueAsString();
+                            // topic format: tickers.BTCUSDT
+                            int dotIndex = topic.lastIndexOf('.');
+                            if (dotIndex > 0) {
+                                symbol = topic.substring(dotIndex + 1);
+                            }
+                        }
                         break;
                     case VALUE_STRING:
-                        if ("s".equals(fieldName) && inData) {
+                        if ("s".equals(fieldName) && inData && symbol == null) {
                             symbol = parser.getValueAsString();
                         } else if ("c".equals(fieldName)) {
                             lastPrice = new BigDecimal(parser.getValueAsString());
@@ -130,6 +141,11 @@ public class BybitMessageParser {
             }
 
             parser.close();
+
+            // Fallback: if symbol is still null, use a default
+            if (symbol == null || symbol.isEmpty()) {
+                symbol = "UNKNOWN";
+            }
 
             // Calculate percentage change (rounded to 2 decimal places)
             BigDecimal changePercent24h = open24h.compareTo(BigDecimal.ZERO) > 0

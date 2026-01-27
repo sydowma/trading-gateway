@@ -8,6 +8,9 @@ import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.codec.http.websocketx.extensions.compression.WebSocketClientCompressionHandler;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,6 +24,7 @@ import java.util.function.Consumer;
 public class WebSocketClient implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketClient.class);
+    private static final long HANDSHAKE_TIMEOUT_MS = 10000;
 
     private final URI uri;
     private final String name;
@@ -28,10 +32,25 @@ public class WebSocketClient implements AutoCloseable {
     private final Consumer<Throwable> errorHandler;
     private final Runnable connectHandler;
     private final Runnable disconnectHandler;
+    private final boolean enableCompression;
 
     private EventLoopGroup eventLoopGroup;
     private Channel channel;
     private volatile boolean connected = false;
+
+    /**
+     * Creates a new WebSocket client with compression enabled.
+     */
+    public WebSocketClient(
+        URI uri,
+        String name,
+        Consumer<String> messageHandler,
+        Consumer<Throwable> errorHandler,
+        Runnable connectHandler,
+        Runnable disconnectHandler
+    ) {
+        this(uri, name, messageHandler, errorHandler, connectHandler, disconnectHandler, true);
+    }
 
     /**
      * Creates a new WebSocket client.
@@ -42,6 +61,7 @@ public class WebSocketClient implements AutoCloseable {
      * @param errorHandler     Callback for errors
      * @param connectHandler   Callback when connection is established
      * @param disconnectHandler Callback when connection is lost
+     * @param enableCompression Whether to enable WebSocket compression (some servers have non-standard implementations)
      */
     public WebSocketClient(
         URI uri,
@@ -49,7 +69,8 @@ public class WebSocketClient implements AutoCloseable {
         Consumer<String> messageHandler,
         Consumer<Throwable> errorHandler,
         Runnable connectHandler,
-        Runnable disconnectHandler
+        Runnable disconnectHandler,
+        boolean enableCompression
     ) {
         this.uri = uri;
         this.name = name;
@@ -57,6 +78,7 @@ public class WebSocketClient implements AutoCloseable {
         this.errorHandler = errorHandler;
         this.connectHandler = connectHandler;
         this.disconnectHandler = disconnectHandler;
+        this.enableCompression = enableCompression;
     }
 
     /**
@@ -80,14 +102,41 @@ public class WebSocketClient implements AutoCloseable {
                     protected void initChannel(Channel ch) {
                         ChannelPipeline pipeline = ch.pipeline();
 
+                        // SSL/TLS for wss:// connections
+                        if ("wss".equals(uri.getScheme())) {
+                            try {
+                                SslContext sslContext = SslContextBuilder.forClient()
+                                    .trustManager(InsecureTrustManagerFactory.INSTANCE)
+                                    // Enable TLSv1.2 and TLSv1.3
+                                    .protocols("TLSv1.2", "TLSv1.3")
+                                    // Use OpenSSL if available, otherwise JDK
+                                    .sslProvider(io.netty.handler.ssl.SslProvider.JDK)
+                                    // Specify cipher suites commonly used by exchanges
+                                    .ciphers(java.util.Arrays.asList(
+                                        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+                                        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+                                        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+                                        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+                                        "TLS_AES_128_GCM_SHA256",
+                                        "TLS_AES_256_GCM_SHA384"
+                                    ))
+                                    .build();
+                                pipeline.addLast(sslContext.newHandler(ch.alloc(), uri.getHost(), uri.getPort()));
+                            } catch (Exception e) {
+                                LOGGER.error("{}: Failed to create SSL context", name, e);
+                            }
+                        }
+
                         // HTTP codec
                         pipeline.addLast(new HttpClientCodec());
 
                         // HTTP object aggregator for handshake
                         pipeline.addLast(new HttpObjectAggregator(8192));
 
-                        // WebSocket compression
-                        pipeline.addLast(WebSocketClientCompressionHandler.INSTANCE);
+                        // WebSocket compression (optional, some servers have non-standard implementations)
+                        if (enableCompression) {
+                            pipeline.addLast(WebSocketClientCompressionHandler.INSTANCE);
+                        }
 
                         // WebSocket handshake and frame handler
                         pipeline.addLast(new WebSocketClientHandler(

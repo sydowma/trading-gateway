@@ -77,7 +77,7 @@ public record GatewayConfig(
 
         String exchangesStr = System.getenv("EXCHANGES");
         if (exchangesStr == null || exchangesStr.isEmpty()) {
-            exchangesStr = "binance:true:ticker,trade,book;okx:true:ticker,trade;bybit:true:ticker,trade";
+            exchangesStr = "binance:true:ticker,trade,book;okx:true:ticker,trade,book;bybit:true:ticker,trade,book";
         }
 
         String symbolsStr = System.getenv("SYMBOLS");
