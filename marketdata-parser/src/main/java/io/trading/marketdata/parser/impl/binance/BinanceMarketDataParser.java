@@ -32,8 +32,10 @@ public class BinanceMarketDataParser implements MarketDataParser {
             // Determine message type
             DataType dataType = parser.parseMessageType(message);
 
+            // Skip subscription confirmation messages
             if (dataType == DataType.UNKNOWN) {
-                throw new IllegalArgumentException("Unknown message type: " + message);
+                // Return a special result indicating to skip this message
+                return new ParseResult(DataType.UNKNOWN, format, null, System.nanoTime() - startTime);
             }
 
             // Parse to Java object first

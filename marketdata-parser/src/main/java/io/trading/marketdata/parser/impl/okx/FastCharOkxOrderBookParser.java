@@ -23,6 +23,24 @@ public class FastCharOkxOrderBookParser {
         char[] chars = message.toCharArray();
         int len = chars.length;
 
+        // First, try to extract instId from "arg":{"instId":"..."}
+        String symbol = null;
+        int argIdx = indexOf(chars, 0, "arg");
+        if (argIdx >= 0) {
+            int instIdIdx = indexOf(chars, argIdx, "instId");
+            if (instIdIdx >= 0) {
+                int start = instIdIdx + 6; // Skip "instId"
+                while (start < len && chars[start] != ':') start++;
+                start++;
+                while (start < len && (chars[start] == ' ' || chars[start] == '"')) start++;
+                int end = start;
+                while (end < len && chars[end] != '"') end++;
+                if (end > start) {
+                    symbol = new String(chars, start, end - start).replace("-", "");
+                }
+            }
+        }
+
         // Find "data":[
         int dataIdx = indexOf(chars, 0, "data");
         if (dataIdx < 0) return null;
@@ -40,7 +58,6 @@ public class FastCharOkxOrderBookParser {
         bids.clear();
         asks.clear();
 
-        String symbol = null;
         long ts = 0;
         boolean isSnapshot = false;
 
@@ -51,19 +68,6 @@ public class FastCharOkxOrderBookParser {
         while (i < len - 10) {
             if (chars[i] == '"' && chars[i + 1] != '"') {
                 switch (chars[i + 1]) {
-                    case 'i': // instId
-                        if (chars[i + 2] == 'n' && chars[i + 3] == 's' && chars[i + 4] == 't' &&
-                            chars[i + 5] == 'I' && chars[i + 6] == 'd') {
-                            i = extractString(chars, i + 6);
-                            int start = lastExtractStart;
-                            int end = lastExtractEnd;
-                            if (end > start) {
-                                symbol = new String(chars, start, end - start).replace("-", "");
-                            }
-                            i = lastExtractEnd;
-                            continue;
-                        }
-                        break;
                     case 'a': // action or asks
                         if (chars[i + 2] == 'c' && chars[i + 3] == 't' && chars[i + 4] == 'i' &&
                             chars[i + 5] == 'o' && chars[i + 6] == 'n') {

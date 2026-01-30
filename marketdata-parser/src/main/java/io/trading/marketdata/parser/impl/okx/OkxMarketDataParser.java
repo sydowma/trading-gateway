@@ -109,6 +109,7 @@ public class OkxMarketDataParser implements MarketDataParser {
 
     @Override
     public boolean isOrderBook(String message) {
-        return message.contains("\"arg\":") && message.contains("\"channel\":\"books\"");
+        return message.contains("\"arg\":") &&
+               (message.contains("\"channel\":\"books") || message.contains("\"channel\":\"books-l2"));
     }
 }

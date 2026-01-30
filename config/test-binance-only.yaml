@@ -1,0 +1,13 @@
+exchanges:
+  - exchange: BINANCE
+    enabled: true
+    symbols:
+      - BTCUSDT
+      - ETHUSDT
+    data_types:
+      - TICKER
+      - TRADES
+      - ORDER_BOOK
+
+aeron:
+  stream_directory: /tmp/aeron-data

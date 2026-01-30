@@ -71,13 +71,38 @@ public class FastBinanceParser {
 
     /**
      * Parse message and return data type.
+     * Returns UNKNOWN for subscription confirmation messages.
      */
     public DataType parseMessageType(String message) {
+        // Check for subscription confirmation messages: {"result":null,"id":...}
+        if (isSubscriptionConfirmation(message)) {
+            return DataType.UNKNOWN;
+        }
+
         int eventHash = findEventType(message);
         if (eventHash == H_24HR_TICKER) return DataType.TICKER;
         if (eventHash == H_TRADE) return DataType.TRADES;
         if (eventHash == H_DEPTH_UPDATE) return DataType.ORDER_BOOK;
         return DataType.UNKNOWN;
+    }
+
+    /**
+     * Check if message is a subscription confirmation.
+     * Subscription confirmations have format: {"result":null,"id":...}
+     */
+    private boolean isSubscriptionConfirmation(String message) {
+        int len = message.length();
+        for (int i = 0; i < len - 8; i++) {
+            char c = message.charAt(i);
+            if (c == '"' && message.charAt(i + 1) == 'r' && message.charAt(i + 2) == 'e'
+                && message.charAt(i + 3) == 's' && message.charAt(i + 4) == 'u'
+                && message.charAt(i + 5) == 'l' && message.charAt(i + 6) == 't'
+                && message.charAt(i + 7) == '"') {
+                // Found "result" field - this is a subscription confirmation
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -331,112 +356,62 @@ public class FastBinanceParser {
     }
 
     public OrderBook parseOrderBook(String message) {
-        String symbol = null;
-        long timestamp = 0;
+        // Optimized version following Bybit's approach
+        char[] chars = message.toCharArray();
+        int len = chars.length;
 
         ArrayList<OrderBookLevel> bids = bidsPool.get();
         ArrayList<OrderBookLevel> asks = asksPool.get();
         bids.clear();
         asks.clear();
 
-        int len = message.length();
-        int fieldHash = 0;
-        int fieldStart = 0;
-        int valueStart = 0;
-        boolean inFieldName = false;
-        boolean afterColon = false;
-        boolean inStringValue = false;
-        boolean inBids = false;
-        boolean inAsks = false;
-        int arrayNestLevel = 0;
-        boolean inOrderBookArray = false;
-        boolean inLevelString = false;
-        BigDecimal lastPrice = null;
+        String symbol = null;
+        long timestamp = 0;
 
-        for (int i = 0; i < len; i++) {
-            char c = message.charAt(i);
-
-            if (c == '"') {
-                if (inOrderBookArray) {
-                    // Inside orderbook array - handle price/qty strings
-                    if (!inLevelString) {
-                        inLevelString = true;
-                        valueStart = i + 1;
-                    } else {
-                        int valueEnd = i;
-                        BigDecimal value = new BigDecimal(message.substring(valueStart, valueEnd));
-                        if (lastPrice == null) {
-                            lastPrice = value;
-                        } else {
-                            BigDecimal qty = value;
-                            OrderBookLevel level = new OrderBookLevel(lastPrice, qty);
-                            if (inBids) bids.add(level);
-                            else asks.add(level);
-                            lastPrice = null;
+        int i = 0;
+        while (i < len - 10) {
+            if (chars[i] == '"' && chars[i + 1] != '"') {
+                switch (chars[i + 1]) {
+                    case 's': // symbol
+                        if (i + 2 < len && chars[i + 2] == '"') {
+                            i = extractStringFromChars(chars, i + 1);
+                            int start = lastExtractStart;
+                            int end = lastExtractEnd;
+                            if (end > start) {
+                                symbol = new String(chars, start, end - start);
+                            }
+                            i = lastExtractEnd;
+                            continue;
                         }
-                        inLevelString = false;
-                    }
-                } else if (!inFieldName && !afterColon) {
-                    inFieldName = true;
-                    fieldStart = i + 1;
-                } else if (inFieldName) {
-                    fieldHash = computeHash(message, fieldStart, i);
-                    inFieldName = false;
-                    afterColon = true;
-                } else if (afterColon && inStringValue) {
-                    int valueEnd = i;
-                    if (fieldHash == F_SYMBOL) {
-                        symbol = message.substring(valueStart, valueEnd);
-                    } else if (fieldHash == F_TIMESTAMP_E) {
-                        timestamp = parseLong(message, valueStart, valueEnd);
-                    }
-                    afterColon = false;
-                    inStringValue = false;
-                    fieldHash = 0;
-                } else if (afterColon && !inStringValue) {
-                    inStringValue = true;
-                    valueStart = i + 1;
-                }
-            } else if (c == ':' && inFieldName) {
-                fieldHash = computeHash(message, fieldStart, i);
-                inFieldName = false;
-                afterColon = true;
-            } else if (afterColon && !inStringValue && (c >= '0' && c <= '9' || c == '-')) {
-                int end = i;
-                while (end < len && (message.charAt(end) >= '0' && message.charAt(end) <= '9' || message.charAt(end) == '.' || message.charAt(end) == '-')) {
-                    end++;
-                }
-                if (fieldHash == F_TIMESTAMP_E) {
-                    timestamp = parseLong(message, i, end);
-                }
-                afterColon = false;
-                fieldHash = 0;
-                i = end - 1;
-            } else if (c == '[') {
-                if (fieldHash == F_BIDS) {
-                    inBids = true;
-                    inOrderBookArray = true;
-                    arrayNestLevel = 1;
-                    afterColon = false;
-                } else if (fieldHash == F_ASKS) {
-                    inAsks = true;
-                    inOrderBookArray = true;
-                    arrayNestLevel = 1;
-                    afterColon = false;
-                } else if (inOrderBookArray) {
-                    arrayNestLevel++;
-                }
-            } else if (c == ']') {
-                if (inOrderBookArray) {
-                    arrayNestLevel--;
-                    if (arrayNestLevel == 0) {
-                        inOrderBookArray = false;
-                        inBids = false;
-                        inAsks = false;
-                        lastPrice = null;
-                    }
+                        break;
+                    case 'E': // timestamp
+                        if (i + 3 < len && chars[i + 2] == '"' && chars[i + 3] == ':') {
+                            i = skipToValue(chars, i + 3);
+                            int start = i;
+                            while (i < len && chars[i] != '"' && chars[i] != ',') i++;
+                            timestamp = parseLongFromChars(chars, start, i);
+                            continue;
+                        }
+                        break;
+                    case 'b': // bids
+                        if (i + 4 < len && chars[i + 2] == '"' && chars[i + 3] == ':' && chars[i + 4] == '[') {
+                            i = parseBinanceOrderBookArray(chars, i + 5, bids);
+                            continue;
+                        }
+                        break;
+                    case 'a': // asks
+                        if (i + 4 < len && chars[i + 2] == '"' && chars[i + 3] == ':' && chars[i + 4] == '[') {
+                            i = parseBinanceOrderBookArray(chars, i + 5, asks);
+                            continue;
+                        }
+                        break;
                 }
             }
+            i++;
+        }
+
+        if (symbol == null) {
+            return null;
         }
 
         return new OrderBook(
@@ -448,6 +423,92 @@ public class FastBinanceParser {
             List.copyOf(asks),
             false
         );
+    }
+
+    /**
+     * Parse Binance order book array following Bybit's optimized pattern.
+     * Format: [["price","qty"],["price","qty"],...]
+     */
+    private int parseBinanceOrderBookArray(char[] chars, int start, ArrayList<OrderBookLevel> levels) {
+        int i = start;
+        int len = chars.length;
+        int depth = 1;
+
+        while (i < len && depth > 0) {
+            if (chars[i] == '[') {
+                depth++;
+                i++;
+                if (depth == 2) {
+                    // Parse level: ["price","qty"]
+                    BigDecimal price = null;
+                    BigDecimal qty = null;
+
+                    // Find price (first string)
+                    while (i < len && chars[i] != '"') i++;
+                    if (i < len) i++; // skip opening quote
+                    int priceStart = i;
+                    while (i < len && chars[i] != '"') i++;
+                    if (i < len) {
+                        price = new BigDecimal(chars, priceStart, i - priceStart);
+                        i++; // skip closing quote
+                    }
+
+                    // Find qty (second string)
+                    while (i < len && chars[i] != '"') i++;
+                    if (i < len) i++; // skip opening quote
+                    int qtyStart = i;
+                    while (i < len && chars[i] != '"') i++;
+                    if (i < len) {
+                        qty = new BigDecimal(chars, qtyStart, i - qtyStart);
+                    }
+
+                    if (price != null && qty != null) {
+                        levels.add(new OrderBookLevel(price, qty));
+                    }
+                }
+            } else if (chars[i] == ']') {
+                depth--;
+            }
+            i++;
+        }
+        return i;
+    }
+
+    // Helper methods for char[] parsing (following Bybit pattern)
+    private int lastExtractStart;
+    private int lastExtractEnd;
+
+    private int extractStringFromChars(char[] chars, int i) {
+        while (i < chars.length && chars[i] != ':') i++;
+        i++;
+        while (i < chars.length && (chars[i] == ' ' || chars[i] == '"')) i++;
+        lastExtractStart = i;
+        while (i < chars.length && chars[i] != '"') i++;
+        lastExtractEnd = i;
+        return i;
+    }
+
+    private int skipToValue(char[] chars, int i) {
+        while (i < chars.length && chars[i] != ':') i++;
+        i++;
+        while (i < chars.length && (chars[i] == ' ' || chars[i] == '"')) i++;
+        return i;
+    }
+
+    private long parseLongFromChars(char[] chars, int start, int end) {
+        long value = 0;
+        boolean negative = false;
+        int pos = start;
+        if (pos < end && chars[pos] == '-') {
+            negative = true;
+            pos++;
+        }
+        for (int i = pos; i < end; i++) {
+            char c = chars[i];
+            if (c < '0' || c > '9') break;
+            value = value * 10 + (c - '0');
+        }
+        return negative ? -value : value;
     }
 
     // Fast hash computation for field names
@@ -499,6 +560,23 @@ public class FastBinanceParser {
         }
         for (int i = pos; i < end; i++) {
             char c = message.charAt(i);
+            if (c < '0' || c > '9') break;
+            value = value * 10 + (c - '0');
+        }
+        return negative ? -value : value;
+    }
+
+    // Fast long parsing from char[] (optimized version)
+    private long parseLong(char[] chars, int start, int end) {
+        long value = 0;
+        boolean negative = false;
+        int pos = start;
+        if (pos < end && chars[pos] == '-') {
+            negative = true;
+            pos++;
+        }
+        for (int i = pos; i < end; i++) {
+            char c = chars[i];
             if (c < '0' || c > '9') break;
             value = value * 10 + (c - '0');
         }

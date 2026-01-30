@@ -18,7 +18,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.URI;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -37,10 +39,11 @@ public class BybitConnector implements ExchangeConnector {
     private final AtomicLong messageCount = new AtomicLong(0);
     private final AtomicLong errorCount = new AtomicLong(0);
 
-    private WebSocketClient client;
-    private ReconnectHandler reconnectHandler;
+    // Separate WebSocket connection for each data type
+    private final Map<DataType, WebSocketClient> clients = new ConcurrentHashMap<>();
+    private final Map<DataType, ReconnectHandler> reconnectHandlers = new ConcurrentHashMap<>();
+    private final Map<DataType, Boolean> connectedStates = new ConcurrentHashMap<>();
     private ExchangeMessageHandler messageHandler;
-    private volatile boolean connected = false;
 
     @Override
     public Exchange getExchange() {
@@ -49,89 +52,103 @@ public class BybitConnector implements ExchangeConnector {
 
     @Override
     public void connect() {
-        if (connected) {
-            LOGGER.warn("[Bybit] Already connected");
-            return;
-        }
+        // Create separate connection for each data type
+        for (DataType dataType : DataType.values()) {
+            if (dataType == DataType.UNKNOWN) continue;
 
-        try {
-            URI uri = URI.create(WS_URL);
+            try {
+                URI uri = URI.create(WS_URL);
+                String channelName = "Bybit-" + dataType.name();
 
-            reconnectHandler = new ReconnectHandler("Bybit", 10, this::doConnect);
-            reconnectHandler.start();
+                ReconnectHandler reconnectHandler = new ReconnectHandler(
+                    channelName,
+                    10,
+                    () -> doConnect(dataType)
+                );
+                reconnectHandler.start();
 
-            client = new WebSocketClient(
-                uri,
-                "Bybit",
-                this::onMessage,
-                this::onError,
-                this::onConnected,
-                this::onDisconnected,
-                false  // Disable compression - Bybit has non-standard permessage-deflate implementation
-            );
+                WebSocketClient client = new WebSocketClient(
+                    uri,
+                    channelName,
+                    msg -> onMessage(msg, dataType),
+                    err -> onError(err, dataType),
+                    () -> onConnected(dataType),
+                    () -> onDisconnected(dataType),
+                    false  // Disable compression - Bybit has non-standard permessage-deflate implementation
+                );
 
-            doConnect();
+                clients.put(dataType, client);
+                reconnectHandlers.put(dataType, reconnectHandler);
+                connectedStates.put(dataType, false);
 
-        } catch (Exception e) {
-            LOGGER.error("[Bybit] Failed to initialize connector", e);
+                doConnect(dataType);
+
+            } catch (Exception e) {
+                LOGGER.error("[Bybit-{}] Failed to initialize connector", dataType, e);
+            }
         }
     }
 
     @Override
     public void disconnect() {
-        connected = false;
+        for (DataType dataType : clients.keySet()) {
+            ReconnectHandler handler = reconnectHandlers.get(dataType);
+            if (handler != null) {
+                handler.stop();
+            }
 
-        if (reconnectHandler != null) {
-            reconnectHandler.stop();
-            reconnectHandler = null;
+            WebSocketClient client = clients.get(dataType);
+            if (client != null) {
+                client.close();
+            }
+
+            connectedStates.put(dataType, false);
         }
 
-        if (client != null) {
-            client.close();
-            client = null;
-        }
+        clients.clear();
+        reconnectHandlers.clear();
+        connectedStates.clear();
 
-        LOGGER.info("[Bybit] Disconnected");
+        LOGGER.info("[Bybit] Disconnected all connections");
     }
 
     @Override
     public boolean isConnected() {
-        return connected && client != null && client.isConnected();
+        // Consider connected if at least one connection is active
+        return connectedStates.values().stream().anyMatch(connected -> connected);
     }
 
     @Override
     public void subscribe(Set<String> symbols, Set<DataType> dataTypes) {
-        if (!isConnected()) {
-            LOGGER.warn("[Bybit] Cannot subscribe, not connected");
-            return;
-        }
-
-        for (String symbol : symbols) {
-            if (dataTypes.contains(DataType.TICKER)) {
-                String subscribeMsg = String.format(
-                    "{\"op\":\"subscribe\",\"args\":[\"tickers.%s\"]}",
-                    symbol
-                );
-                client.send(subscribeMsg);
-                LOGGER.info("[Bybit] Subscribed to ticker for {}", symbol);
+        // Subscribe to each data type on its dedicated connection
+        for (DataType dataType : dataTypes) {
+            WebSocketClient client = clients.get(dataType);
+            if (client == null) {
+                LOGGER.warn("[Bybit-{}] No client for data type", dataType);
+                continue;
             }
 
-            if (dataTypes.contains(DataType.TRADES)) {
-                String subscribeMsg = String.format(
-                    "{\"op\":\"subscribe\",\"args\":[\"publicTrade.%s\"]}",
-                    symbol
-                );
-                client.send(subscribeMsg);
-                LOGGER.info("[Bybit] Subscribed to trades for {}", symbol);
+            // Build subscription args for all symbols of this data type
+            java.util.List<String> args = new java.util.ArrayList<>();
+
+            for (String symbol : symbols) {
+                if (dataType == DataType.TICKER) {
+                    args.add("tickers." + symbol);
+                } else if (dataType == DataType.TRADES) {
+                    args.add("publicTrade." + symbol);
+                } else if (dataType == DataType.ORDER_BOOK) {
+                    args.add("orderbook.1." + symbol);
+                }
             }
 
-            if (dataTypes.contains(DataType.ORDER_BOOK)) {
+            if (!args.isEmpty()) {
+                // Send single subscription with all symbols for this data type
                 String subscribeMsg = String.format(
-                    "{\"op\":\"subscribe\",\"args\":[\"orderbook.1.%s\"]}",
-                    symbol
+                    "{\"op\":\"subscribe\",\"args\":[\"%s\"]}",
+                    String.join("\",\"", args)
                 );
                 client.send(subscribeMsg);
-                LOGGER.info("[Bybit] Subscribed to order book for {}", symbol);
+                LOGGER.info("[Bybit-{}] Subscribed to {}: {}", dataType, dataType, symbols);
             }
         }
     }
@@ -161,25 +178,32 @@ public class BybitConnector implements ExchangeConnector {
         disconnect();
     }
 
-    private void doConnect() {
+    private void doConnect(DataType dataType) {
+        WebSocketClient client = clients.get(dataType);
         if (client != null) {
             client.connect();
         }
     }
 
-    private void onConnected() {
-        connected = true;
-        reconnectHandler.reset();
-        LOGGER.info("[Bybit] Connected");
+    private void onConnected(DataType dataType) {
+        connectedStates.put(dataType, true);
+        ReconnectHandler handler = reconnectHandlers.get(dataType);
+        if (handler != null) {
+            handler.reset();
+        }
+        LOGGER.info("[Bybit-{}] Connected", dataType);
     }
 
-    private void onDisconnected() {
-        connected = false;
-        LOGGER.warn("[Bybit] Disconnected, scheduling reconnect...");
-        reconnectHandler.scheduleReconnect();
+    private void onDisconnected(DataType dataType) {
+        connectedStates.put(dataType, false);
+        LOGGER.warn("[Bybit-{}] Disconnected, scheduling reconnect...", dataType);
+        ReconnectHandler handler = reconnectHandlers.get(dataType);
+        if (handler != null) {
+            handler.scheduleReconnect();
+        }
     }
 
-    private void onMessage(String message) {
+    private void onMessage(String message, DataType sourceDataType) {
         messageCount.incrementAndGet();
 
         ProcessingTimer.TimingContext totalTimer = processingTimer.start();
@@ -187,8 +211,9 @@ public class BybitConnector implements ExchangeConnector {
         try {
             // Parse and dispatch message using new parser API
             ParseResult result = parser.parse(message, OutputFormat.JAVA);
+            DataType actualDataType = result.getDataType();
 
-            if (result.getDataType() == DataType.TICKER) {
+            if (actualDataType == DataType.TICKER) {
                 Ticker ticker = result.getAsTicker();
 
                 if (messageHandler != null) {
@@ -196,7 +221,7 @@ public class BybitConnector implements ExchangeConnector {
                 }
 
                 processingTimer.record("BYBIT", "TICKER", result.getParseTimeNanos());
-            } else if (result.getDataType() == DataType.TRADES) {
+            } else if (actualDataType == DataType.TRADES) {
                 Trade trade = result.getAsTrade();
 
                 if (messageHandler != null) {
@@ -204,7 +229,7 @@ public class BybitConnector implements ExchangeConnector {
                 }
 
                 processingTimer.record("BYBIT", "TRADE", result.getParseTimeNanos());
-            } else if (result.getDataType() == DataType.ORDER_BOOK) {
+            } else if (actualDataType == DataType.ORDER_BOOK) {
                 OrderBook orderBook = result.getAsOrderBook();
 
                 if (messageHandler != null) {
@@ -217,12 +242,12 @@ public class BybitConnector implements ExchangeConnector {
             totalTimer.stop();
         } catch (Exception e) {
             errorCount.incrementAndGet();
-            LOGGER.error("[Bybit] Failed to parse message", e);
+            LOGGER.error("[Bybit-{}] Failed to parse message", sourceDataType, e);
         }
     }
 
-    private void onError(Throwable error) {
+    private void onError(Throwable error, DataType dataType) {
         errorCount.incrementAndGet();
-        LOGGER.error("[Bybit] WebSocket error", error);
+        LOGGER.error("[Bybit-{}] WebSocket error", dataType, error);
     }
 }

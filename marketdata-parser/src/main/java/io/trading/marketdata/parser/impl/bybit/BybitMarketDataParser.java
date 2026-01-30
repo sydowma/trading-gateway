@@ -99,16 +99,16 @@ public class BybitMarketDataParser implements MarketDataParser {
 
     @Override
     public boolean isTicker(String message) {
-        return message.contains("\"topic\":\"tickers\"");
+        return message.contains("\"topic\":\"tickers.") && message.contains("\"data\":");
     }
 
     @Override
     public boolean isTrade(String message) {
-        return message.contains("\"topic\":\"publicTrade\"");
+        return message.contains("\"topic\":\"publicTrade.") && message.contains("\"data\":");
     }
 
     @Override
     public boolean isOrderBook(String message) {
-        return message.contains("\"topic\":\"orderbook\"");
+        return message.contains("\"topic\":\"orderbook.") && message.contains("\"data\":");
     }
 }
