@@ -33,8 +33,10 @@ public class GatewayMetrics {
     private final Gauge connectionStatus;
     private final Gauge activeSubscriptions;
 
-    // Summary (latency tracking)
-    private final Summary messageLatency;
+    // Summary (latency tracking in microseconds)
+    private final Summary messageLatencyMicros;
+    private final Summary parseLatencyMicros;
+    private final Summary publishLatencyMicros;
 
     // Histogram (message size distribution)
     private final Histogram messageSize;
@@ -94,10 +96,24 @@ public class GatewayMetrics {
             .labelNames("exchange")
             .register();
 
-        // Message latency summary (in milliseconds)
-        this.messageLatency = Summary.build()
-            .name("gateway_message_latency_milliseconds")
-            .help("Message processing latency in milliseconds")
+        // Message latency summary (in microseconds)
+        this.messageLatencyMicros = Summary.build()
+            .name("gateway_message_latency_microseconds")
+            .help("Total message processing latency in microseconds (receive to publish)")
+            .labelNames("exchange", "data_type")
+            .register();
+
+        // Parse latency summary (in microseconds)
+        this.parseLatencyMicros = Summary.build()
+            .name("gateway_parse_latency_microseconds")
+            .help("Message parsing latency in microseconds")
+            .labelNames("exchange", "data_type")
+            .register();
+
+        // Publish latency summary (in microseconds)
+        this.publishLatencyMicros = Summary.build()
+            .name("gateway_publish_latency_microseconds")
+            .help("Message publish (encode + offer) latency in microseconds")
             .labelNames("exchange", "data_type")
             .register();
 
@@ -170,14 +186,36 @@ public class GatewayMetrics {
     }
 
     /**
-     * Records message processing latency.
+     * Records total message processing latency (receive to publish).
      *
      * @param exchange The exchange
      * @param dataType The data type
-     * @param latencyMs Latency in milliseconds
+     * @param latencyMicros Latency in microseconds
      */
-    public void recordMessageLatency(Exchange exchange, DataType dataType, double latencyMs) {
-        messageLatency.labels(exchange.name(), dataType.name()).observe(latencyMs);
+    public void recordMessageLatency(Exchange exchange, DataType dataType, double latencyMicros) {
+        messageLatencyMicros.labels(exchange.name(), dataType.name()).observe(latencyMicros);
+    }
+
+    /**
+     * Records message parsing latency.
+     *
+     * @param exchange The exchange
+     * @param dataType The data type
+     * @param latencyMicros Latency in microseconds
+     */
+    public void recordParseLatency(Exchange exchange, DataType dataType, double latencyMicros) {
+        parseLatencyMicros.labels(exchange.name(), dataType.name()).observe(latencyMicros);
+    }
+
+    /**
+     * Records message publish latency (encode + offer).
+     *
+     * @param exchange The exchange
+     * @param dataType The data type
+     * @param latencyMicros Latency in microseconds
+     */
+    public void recordPublishLatency(Exchange exchange, DataType dataType, double latencyMicros) {
+        publishLatencyMicros.labels(exchange.name(), dataType.name()).observe(latencyMicros);
     }
 
     /**

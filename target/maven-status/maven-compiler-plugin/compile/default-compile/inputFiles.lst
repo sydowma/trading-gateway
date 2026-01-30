@@ -9,13 +9,17 @@
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/config/SymbolConfig.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/core/GatewayController.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/core/HealthMonitor.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/core/ProcessingTimer.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/example/MarketDataConsumer.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/ExchangeConnector.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/ExchangeMessageHandler.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/binance/BinanceConnector.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/binance/BinanceMessageParser.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/binance/FastBinanceParser.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/bybit/BybitConnector.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/bybit/BybitMessageParser.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/bybit/FastCharBybitTickerParser.java
+/Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/okx/FastCharOkxTickerParser.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/okx/OkxConnector.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/exchange/okx/OkxMessageParser.java
 /Users/oker/GitHub/download/trading-gateway/src/main/java/io/trading/gateway/metrics/GatewayMetrics.java

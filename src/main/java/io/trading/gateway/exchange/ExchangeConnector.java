@@ -1,5 +1,6 @@
 package io.trading.gateway.exchange;
 
+import io.trading.gateway.core.ProcessingTimer;
 import io.trading.gateway.model.Exchange;
 import io.trading.gateway.model.DataType;
 
@@ -55,4 +56,10 @@ public interface ExchangeConnector extends AutoCloseable {
      * Gets the number of parsing errors.
      */
     long getErrorCount();
+
+    /**
+     * Gets the processing timer for this connector.
+     * Used to track message parsing latency.
+     */
+    ProcessingTimer getProcessingTimer();
 }

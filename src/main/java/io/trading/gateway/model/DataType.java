@@ -6,7 +6,8 @@ package io.trading.gateway.model;
 public enum DataType {
     TICKER("ticker"),
     TRADES("trades"),
-    ORDER_BOOK("order_book");
+    ORDER_BOOK("order_book"),
+    UNKNOWN("unknown");
 
     private final String displayName;
 

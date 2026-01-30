@@ -1,5 +1,6 @@
 package io.trading.gateway.exchange.binance;
 
+import io.trading.gateway.core.ProcessingTimer;
 import io.trading.gateway.exchange.ExchangeConnector;
 import io.trading.gateway.exchange.ExchangeMessageHandler;
 import io.trading.gateway.model.DataType;
@@ -30,7 +31,9 @@ public class BinanceConnector implements ExchangeConnector {
     // Combined streams URL (more efficient for multiple subscriptions)
     private static final String WS_COMBINED_URL = "wss://stream.binance.com:9443/stream";
 
-    private final BinanceMessageParser parser = new BinanceMessageParser();
+    // Use fast parser for better performance
+    private final FastBinanceParser parser = new FastBinanceParser();
+    private final ProcessingTimer processingTimer = new ProcessingTimer();
     private final AtomicLong messageCount = new AtomicLong(0);
     private final AtomicLong errorCount = new AtomicLong(0);
 
@@ -150,6 +153,11 @@ public class BinanceConnector implements ExchangeConnector {
     }
 
     @Override
+    public ProcessingTimer getProcessingTimer() {
+        return processingTimer;
+    }
+
+    @Override
     public void close() {
         disconnect();
     }
@@ -175,24 +183,49 @@ public class BinanceConnector implements ExchangeConnector {
     private void onMessage(String message) {
         messageCount.incrementAndGet();
 
+        ProcessingTimer.TimingContext totalTimer = processingTimer.start();
+
         try {
-            // Parse and dispatch message
-            if (parser.isTicker(message)) {
+            // Parse and dispatch message using fast parser
+            DataType dataType = parser.parseMessageType(message);
+
+            if (dataType == DataType.TICKER) {
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
                 Ticker ticker = parser.parseTicker(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (ticker != null && messageHandler != null) {
                     messageHandler.onTicker(ticker);
                 }
-            } else if (parser.isTrade(message)) {
+
+                processingTimer.record("BINANCE", "TICKER", parseTimer.stop());
+                LOGGER.debug("[Binance] Ticker parsed in {} us", parseMicros);
+            } else if (dataType == DataType.TRADES) {
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
                 Trade trade = parser.parseTrade(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (trade != null && messageHandler != null) {
                     messageHandler.onTrade(trade);
                 }
-            } else if (parser.isOrderBook(message)) {
+
+                processingTimer.record("BINANCE", "TRADE", parseTimer.stop());
+                LOGGER.debug("[Binance] Trade parsed in {} us", parseMicros);
+            } else if (dataType == DataType.ORDER_BOOK) {
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
                 OrderBook orderBook = parser.parseOrderBook(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (orderBook != null && messageHandler != null) {
                     messageHandler.onOrderBook(orderBook);
                 }
+
+                processingTimer.record("BINANCE", "ORDER_BOOK", parseTimer.stop());
+                LOGGER.debug("[Binance] OrderBook parsed in {} us", parseMicros);
             }
+
+            long totalMicros = totalTimer.stopMicros();
+            LOGGER.debug("[Binance] Total message processed in {} us", totalMicros);
         } catch (Exception e) {
             errorCount.incrementAndGet();
             LOGGER.error("[Binance] Failed to parse message", e);

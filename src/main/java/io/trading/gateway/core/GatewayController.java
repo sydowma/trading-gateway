@@ -47,6 +47,7 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
     private final HealthMonitor healthMonitor;
     private final GatewayMetrics metrics;
     private final MetricsServer metricsServer;
+    private final ProcessingTimer processingTimer;
     private final Map<Exchange, ExchangeConnector> connectors;
     private final ShutdownSignalBarrier shutdownBarrier;
     private final ScheduledExecutorService scheduler;
@@ -87,10 +88,11 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
             .useConductorAgentInvoker(true);
 
         this.aeron = Aeron.connect(context);
-        this.publisher = new AeronPublisher(aeron);
-        this.healthMonitor = new HealthMonitor(config.healthCheckMs());
         this.metrics = new GatewayMetrics();
+        this.publisher = new AeronPublisher(aeron, metrics);
+        this.healthMonitor = new HealthMonitor(config.healthCheckMs());
         this.metricsServer = new MetricsServer(config.metricsPort(), metrics, config, healthMonitor);
+        this.processingTimer = new ProcessingTimer();
         this.connectors = new HashMap<>();
         this.shutdownBarrier = new ShutdownSignalBarrier();
         this.scheduler = Executors.newScheduledThreadPool(2);
@@ -159,27 +161,44 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
      * Schedules periodic subscription retries until the connector is connected.
      */
     private void scheduleSubscriptionRetry(ExchangeConnector connector, Exchange exchange) {
-        scheduler.scheduleAtFixedRate(() -> {
-            if (connector.isConnected()) {
-                // Already connected, try subscriptions and cancel if successful
-                Set<SymbolConfig> symbolConfigs = config.symbolConfigs().stream()
-                    .filter(sc -> sc.exchanges().contains(exchange))
-                    .collect(Collectors.toSet());
+        final java.util.concurrent.ScheduledFuture<?>[] futureHolder = new java.util.concurrent.ScheduledFuture<?>[1];
 
-                if (!symbolConfigs.isEmpty()) {
-                    Set<DataType> dataTypes = config.exchangeConfigs().stream()
-                        .filter(ec -> ec.exchange() == exchange)
-                        .flatMap(ec -> ec.dataTypes().stream())
+        Runnable subscribeTask = new Runnable() {
+            private int attemptCount = 0;
+            private final int MAX_ATTEMPTS = 3;
+
+            @Override
+            public void run() {
+                if (connector.isConnected() && attemptCount < MAX_ATTEMPTS) {
+                    attemptCount++;
+
+                    Set<SymbolConfig> symbolConfigs = config.symbolConfigs().stream()
+                        .filter(sc -> sc.exchanges().contains(exchange))
                         .collect(Collectors.toSet());
 
-                    for (SymbolConfig symbolConfig : symbolConfigs) {
-                        connector.subscribe(java.util.Set.of(symbolConfig.symbol()), dataTypes);
-                        LOGGER.info("[{}] Subscribed to {} for data types: {}",
-                            exchange, symbolConfig.symbol(), dataTypes);
+                    if (!symbolConfigs.isEmpty()) {
+                        Set<DataType> dataTypes = config.exchangeConfigs().stream()
+                            .filter(ec -> ec.exchange() == exchange)
+                            .flatMap(ec -> ec.dataTypes().stream())
+                            .collect(Collectors.toSet());
+
+                        for (SymbolConfig symbolConfig : symbolConfigs) {
+                            connector.subscribe(java.util.Set.of(symbolConfig.symbol()), dataTypes);
+                            LOGGER.info("[{}] Subscribed to {} for data types: {} (attempt {}/{})",
+                                exchange, symbolConfig.symbol(), dataTypes, attemptCount, MAX_ATTEMPTS);
+                        }
+                    }
+
+                    // Cancel after successful subscription attempts
+                    if (attemptCount >= MAX_ATTEMPTS && futureHolder[0] != null) {
+                        futureHolder[0].cancel(false);
+                        LOGGER.debug("[{}] Subscription scheduler cancelled after {} attempts", exchange, MAX_ATTEMPTS);
                     }
                 }
             }
-        }, 0, 2, TimeUnit.SECONDS);
+        };
+
+        futureHolder[0] = scheduler.scheduleAtFixedRate(subscribeTask, 0, 2, TimeUnit.SECONDS);
     }
 
     /**
@@ -230,23 +249,76 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
 
     @Override
     public void onTicker(Ticker ticker) {
+        LOGGER.info("[Gateway] onTicker called: exchange={}, symbol={}", ticker.exchange(), ticker.symbol());
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         metrics.recordMessageReceived(ticker.exchange(), DataType.TICKER);
-        metrics.recordMessagePublished(ticker.exchange(), DataType.TICKER);
+        LOGGER.info("[Gateway] recordMessageReceived called for {}", ticker.exchange());
+
+        // Get parse latency from connector and record to metrics
+        ExchangeConnector connector = connectors.get(ticker.exchange());
+        if (connector != null) {
+            ProcessingTimer.TimerStats parseStats = connector.getProcessingTimer()
+                .getStats(ticker.exchange().name(), "TICKER");
+            if (parseStats != null && parseStats.getCount() > 0) {
+                metrics.recordParseLatency(ticker.exchange(), DataType.TICKER, parseStats.getAvgMicros());
+            }
+        }
+
         publisher.publishTicker(ticker);
+        metrics.recordMessagePublished(ticker.exchange(), DataType.TICKER);
+
+        long totalMicros = timer.stopMicros();
+        metrics.recordMessageLatency(ticker.exchange(), DataType.TICKER, totalMicros);
+        LOGGER.debug("[Gateway] Ticker total latency: {} us", totalMicros);
     }
 
     @Override
     public void onTrade(Trade trade) {
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         metrics.recordMessageReceived(trade.exchange(), DataType.TRADES);
-        metrics.recordMessagePublished(trade.exchange(), DataType.TRADES);
+
+        // Get parse latency from connector and record to metrics
+        ExchangeConnector connector = connectors.get(trade.exchange());
+        if (connector != null) {
+            ProcessingTimer.TimerStats parseStats = connector.getProcessingTimer()
+                .getStats(trade.exchange().name(), "TRADE");
+            if (parseStats != null && parseStats.getCount() > 0) {
+                metrics.recordParseLatency(trade.exchange(), DataType.TRADES, parseStats.getAvgMicros());
+            }
+        }
+
         publisher.publishTrade(trade);
+        metrics.recordMessagePublished(trade.exchange(), DataType.TRADES);
+
+        long totalMicros = timer.stopMicros();
+        metrics.recordMessageLatency(trade.exchange(), DataType.TRADES, totalMicros);
+        LOGGER.debug("[Gateway] Trade total latency: {} us", totalMicros);
     }
 
     @Override
     public void onOrderBook(OrderBook orderBook) {
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         metrics.recordMessageReceived(orderBook.exchange(), DataType.ORDER_BOOK);
-        metrics.recordMessagePublished(orderBook.exchange(), DataType.ORDER_BOOK);
+
+        // Get parse latency from connector and record to metrics
+        ExchangeConnector connector = connectors.get(orderBook.exchange());
+        if (connector != null) {
+            ProcessingTimer.TimerStats parseStats = connector.getProcessingTimer()
+                .getStats(orderBook.exchange().name(), "ORDER_BOOK");
+            if (parseStats != null && parseStats.getCount() > 0) {
+                metrics.recordParseLatency(orderBook.exchange(), DataType.ORDER_BOOK, parseStats.getAvgMicros());
+            }
+        }
+
         publisher.publishOrderBook(orderBook);
+        metrics.recordMessagePublished(orderBook.exchange(), DataType.ORDER_BOOK);
+
+        long totalMicros = timer.stopMicros();
+        metrics.recordMessageLatency(orderBook.exchange(), DataType.ORDER_BOOK, totalMicros);
+        LOGGER.debug("[Gateway] OrderBook total latency: {} us", totalMicros);
     }
 
     /**
@@ -270,18 +342,45 @@ public class GatewayController implements AutoCloseable, ExchangeMessageHandler 
         LOGGER.info("Active Publications: {}", publisher.getPublicationCount());
         LOGGER.info("Publish Failures: {}", publisher.getPublishFailureCount());
 
+        // Log processing latency stats for each connector
         for (Map.Entry<Exchange, ExchangeConnector> entry : connectors.entrySet()) {
             ExchangeConnector connector = entry.getValue();
+            ProcessingTimer timer = connector.getProcessingTimer();
             LOGGER.info("{}: connected={}, messages={}, errors={}",
                 entry.getKey(),
                 connector.isConnected(),
                 connector.getMessageCount(),
                 connector.getErrorCount()
             );
+            logProcessingStats(timer, entry.getKey().name());
         }
+
+        // Log publish latency stats
+        LOGGER.info("--- Publish Latency Stats ---");
+        logProcessingStats(publisher.getProcessingTimer(), "PUBLISH");
 
         healthMonitor.logSummary();
         LOGGER.info("=====================");
+    }
+
+    /**
+     * Logs processing statistics from a timer.
+     */
+    private void logProcessingStats(ProcessingTimer timer, String label) {
+        for (Map.Entry<ProcessingTimer.TimerKey, ProcessingTimer.TimerStats> entry :
+             timer.getAllStats().entrySet()) {
+            ProcessingTimer.TimerStats stats = entry.getValue();
+            if (stats.getCount() > 0) {
+                LOGGER.info("  [{}] {}: count={}, avg={} us, min={} us, max={} us",
+                    label,
+                    entry.getKey().getDataType(),
+                    stats.getCount(),
+                    String.format("%.2f", stats.getAvgMicros()),
+                    stats.getMinMicros(),
+                    stats.getMaxMicros()
+                );
+            }
+        }
     }
 
     /**

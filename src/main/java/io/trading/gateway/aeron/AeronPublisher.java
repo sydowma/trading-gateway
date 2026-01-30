@@ -2,6 +2,8 @@ package io.trading.gateway.aeron;
 
 import io.aeron.Aeron;
 import io.aeron.ExclusivePublication;
+import io.trading.gateway.core.ProcessingTimer;
+import io.trading.gateway.metrics.GatewayMetrics;
 import io.trading.gateway.model.DataType;
 import io.trading.gateway.model.Exchange;
 import io.trading.gateway.model.OrderBook;
@@ -34,14 +36,17 @@ public class AeronPublisher implements AutoCloseable {
     private final Aeron aeron;
     private final Map<PublicationKey, ExclusivePublication> publications;
     private final AtomicLong publishFailures = new AtomicLong(0);
+    private final ProcessingTimer processingTimer = new ProcessingTimer();
+    private final GatewayMetrics metrics;
 
     // Reusable buffers for zero-allocation encoding
     private final AtomicBuffer tickerBuffer = BinaryEncoder.getTickerBuffer();
     private final AtomicBuffer tradeBuffer = BinaryEncoder.getTradeBuffer();
     private final AtomicBuffer orderBookBuffer = BinaryEncoder.getOrderBookBuffer();
 
-    public AeronPublisher(Aeron aeron) {
+    public AeronPublisher(Aeron aeron, GatewayMetrics metrics) {
         this.aeron = aeron;
+        this.metrics = metrics;
         this.publications = new ConcurrentHashMap<>();
     }
 
@@ -49,6 +54,8 @@ public class AeronPublisher implements AutoCloseable {
      * Publishes a ticker message to the appropriate Aeron stream.
      */
     public boolean publishTicker(Ticker ticker) {
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         try {
             ExclusivePublication publication = getOrCreatePublication(ticker.exchange(), DataType.TICKER);
             int length = BinaryEncoder.encodeTicker(tickerBuffer, ticker);
@@ -61,6 +68,12 @@ public class AeronPublisher implements AutoCloseable {
                 return false;
             }
 
+            long publishMicros = timer.stopMicros();
+            processingTimer.record(ticker.exchange().name(), "TICKER", timer.stop());
+            if (metrics != null) {
+                metrics.recordPublishLatency(ticker.exchange(), DataType.TICKER, publishMicros);
+            }
+            LOGGER.debug("[Aeron] Ticker published in {} us", publishMicros);
             return true;
         } catch (Exception e) {
             LOGGER.error("Failed to encode/publish ticker", e);
@@ -72,6 +85,8 @@ public class AeronPublisher implements AutoCloseable {
      * Publishes a trade message to the appropriate Aeron stream.
      */
     public boolean publishTrade(Trade trade) {
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         try {
             ExclusivePublication publication = getOrCreatePublication(trade.exchange(), DataType.TRADES);
             int length = BinaryEncoder.encodeTrade(tradeBuffer, trade);
@@ -84,6 +99,12 @@ public class AeronPublisher implements AutoCloseable {
                 return false;
             }
 
+            long publishMicros = timer.stopMicros();
+            processingTimer.record(trade.exchange().name(), "TRADE", timer.stop());
+            if (metrics != null) {
+                metrics.recordPublishLatency(trade.exchange(), DataType.TRADES, publishMicros);
+            }
+            LOGGER.debug("[Aeron] Trade published in {} us", publishMicros);
             return true;
         } catch (Exception e) {
             LOGGER.error("Failed to encode/publish trade", e);
@@ -95,6 +116,8 @@ public class AeronPublisher implements AutoCloseable {
      * Publishes an order book message to the appropriate Aeron stream.
      */
     public boolean publishOrderBook(OrderBook orderBook) {
+        ProcessingTimer.TimingContext timer = processingTimer.start();
+
         try {
             ExclusivePublication publication = getOrCreatePublication(orderBook.exchange(), DataType.ORDER_BOOK);
             int length = BinaryEncoder.encodeOrderBook(orderBookBuffer, orderBook);
@@ -107,6 +130,12 @@ public class AeronPublisher implements AutoCloseable {
                 return false;
             }
 
+            long publishMicros = timer.stopMicros();
+            processingTimer.record(orderBook.exchange().name(), "ORDER_BOOK", timer.stop());
+            if (metrics != null) {
+                metrics.recordPublishLatency(orderBook.exchange(), DataType.ORDER_BOOK, publishMicros);
+            }
+            LOGGER.debug("[Aeron] OrderBook published in {} us", publishMicros);
             return true;
         } catch (Exception e) {
             LOGGER.error("Failed to encode/publish orderBook", e);
@@ -151,6 +180,14 @@ public class AeronPublisher implements AutoCloseable {
 
     public int getPublicationCount() {
         return publications.size();
+    }
+
+    /**
+     * Gets the processing timer for this publisher.
+     * Used to track message publish latency.
+     */
+    public ProcessingTimer getProcessingTimer() {
+        return processingTimer;
     }
 
     @Override

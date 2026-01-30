@@ -12,6 +12,8 @@ io/trading/gateway/model/OrderBookLevel.class
 io/trading/gateway/exchange/ExchangeMessageHandler.class
 io/trading/gateway/example/MarketDataConsumer$1.class
 io/trading/gateway/core/GatewayController$2.class
+io/trading/gateway/exchange/binance/FastBinanceParser.class
+io/trading/gateway/core/ProcessingTimer$TimerKey.class
 io/trading/gateway/netty/ReconnectHandler.class
 io/trading/gateway/core/GatewayController$1.class
 io/trading/gateway/model/Side.class
@@ -25,8 +27,11 @@ io/trading/gateway/netty/WebSocketClientHandler.class
 io/trading/gateway/metrics/MetricsServer.class
 io/trading/gateway/metrics/MetricsServer$ExchangeStatusInfo.class
 io/trading/gateway/metrics/MetricsServer$HealthResponse.class
+io/trading/gateway/exchange/bybit/FastCharBybitTickerParser.class
+io/trading/gateway/core/ProcessingTimer$TimerStats.class
 io/trading/gateway/model/Exchange.class
 io/trading/gateway/exchange/ExchangeConnector.class
+io/trading/gateway/core/ProcessingTimer$TimingContext.class
 io/trading/gateway/model/Trade.class
 io/trading/gateway/exchange/binance/BinanceConnector.class
 io/trading/gateway/TradingGateway.class
@@ -34,6 +39,7 @@ io/trading/gateway/core/HealthMonitor$ConnectionChecker.class
 io/trading/gateway/exchange/bybit/BybitConnector.class
 io/trading/gateway/exchange/okx/OkxConnector.class
 io/trading/gateway/example/MarketDataConsumer$3.class
+io/trading/gateway/exchange/okx/FastCharOkxTickerParser.class
 io/trading/gateway/aeron/AeronPublisher.class
 io/trading/gateway/metrics/GatewayMetrics.class
 io/trading/gateway/aeron/StreamRegistry$1.class
@@ -43,10 +49,12 @@ io/trading/gateway/netty/WebSocketClient.class
 io/trading/gateway/exchange/binance/BinanceMessageParser.class
 io/trading/gateway/aeron/BinaryEncoder.class
 io/trading/gateway/exchange/bybit/BybitMessageParser.class
+io/trading/gateway/core/ProcessingTimer.class
 io/trading/gateway/config/GatewayConfig$Builder.class
 io/trading/gateway/model/DataType.class
 io/trading/gateway/model/OrderBook.class
 io/trading/gateway/model/Ticker.class
 io/trading/gateway/example/MarketDataConsumer$2.class
 io/trading/gateway/config/ExchangeConfig.class
+io/trading/gateway/core/GatewayController$3.class
 io/trading/gateway/config/SymbolConfig.class

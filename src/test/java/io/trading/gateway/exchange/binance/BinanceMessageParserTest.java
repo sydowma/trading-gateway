@@ -84,13 +84,13 @@ class BinanceMessageParserTest {
 
     @Test
     void testParseTrade() {
-        // Real Binance trade message
+        // Real Binance trade message - note: t is a number in real API
         String message = """
             {
                 "e": "trade",
                 "E": 1704067200000,
                 "s": "BTCUSDT",
-                "t": "123456789",
+                "t": 123456789,
                 "p": "43250.50",
                 "q": "0.5",
                 "m": true
@@ -116,7 +116,7 @@ class BinanceMessageParserTest {
                 "e": "trade",
                 "E": 1704067200000,
                 "s": "BTCUSDT",
-                "t": "123456789",
+                "t": 123456789,
                 "p": "43250.50",
                 "q": "0.5",
                 "m": false

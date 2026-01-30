@@ -35,6 +35,7 @@ public class StreamRegistry {
             case TICKER -> 1;
             case TRADES -> 2;
             case ORDER_BOOK -> 3;
+            case UNKNOWN -> 0;
         };
         return BASE_STREAM_ID + exchangeOffset + typeOffset;
     }

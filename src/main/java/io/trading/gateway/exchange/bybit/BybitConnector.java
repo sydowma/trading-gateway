@@ -1,5 +1,6 @@
 package io.trading.gateway.exchange.bybit;
 
+import io.trading.gateway.core.ProcessingTimer;
 import io.trading.gateway.exchange.ExchangeConnector;
 import io.trading.gateway.exchange.ExchangeMessageHandler;
 import io.trading.gateway.model.DataType;
@@ -27,8 +28,11 @@ public class BybitConnector implements ExchangeConnector {
     private static final String WS_URL = "wss://stream.bybit.com/v5/public/spot";
 
     private final BybitMessageParser parser = new BybitMessageParser();
+    private final FastCharBybitTickerParser fastCharTickerParser = new FastCharBybitTickerParser();
+    private final ProcessingTimer processingTimer = new ProcessingTimer();
     private final AtomicLong messageCount = new AtomicLong(0);
     private final AtomicLong errorCount = new AtomicLong(0);
+    private int debugMsgCount = 0;
 
     private WebSocketClient client;
     private ReconnectHandler reconnectHandler;
@@ -145,6 +149,11 @@ public class BybitConnector implements ExchangeConnector {
     }
 
     @Override
+    public ProcessingTimer getProcessingTimer() {
+        return processingTimer;
+    }
+
+    @Override
     public void close() {
         disconnect();
     }
@@ -169,25 +178,52 @@ public class BybitConnector implements ExchangeConnector {
 
     private void onMessage(String message) {
         messageCount.incrementAndGet();
+        if (debugMsgCount < 3) {
+            System.err.println("[BYBIT] Message #" + (debugMsgCount + 1) + ": " + message.substring(0, Math.min(500, message.length())));
+            debugMsgCount++;
+        }
+
+        ProcessingTimer.TimingContext totalTimer = processingTimer.start();
 
         try {
             // Parse and dispatch message
             if (parser.isTicker(message)) {
-                Ticker ticker = parser.parseTicker(message);
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
+                Ticker ticker = fastCharTickerParser.parseTicker(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (ticker != null && messageHandler != null) {
                     messageHandler.onTicker(ticker);
                 }
+
+                processingTimer.record("BYBIT", "TICKER", parseTimer.stop());
+                LOGGER.debug("[Bybit] Ticker parsed in {} us", parseMicros);
             } else if (parser.isTrade(message)) {
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
                 Trade trade = parser.parseTrade(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (trade != null && messageHandler != null) {
                     messageHandler.onTrade(trade);
                 }
+
+                processingTimer.record("BYBIT", "TRADE", parseTimer.stop());
+                LOGGER.debug("[Bybit] Trade parsed in {} us", parseMicros);
             } else if (parser.isOrderBook(message)) {
+                ProcessingTimer.TimingContext parseTimer = processingTimer.start();
                 OrderBook orderBook = parser.parseOrderBook(message);
+                long parseMicros = parseTimer.stopMicros();
+
                 if (orderBook != null && messageHandler != null) {
                     messageHandler.onOrderBook(orderBook);
                 }
+
+                processingTimer.record("BYBIT", "ORDER_BOOK", parseTimer.stop());
+                LOGGER.debug("[Bybit] OrderBook parsed in {} us", parseMicros);
             }
+
+            long totalMicros = totalTimer.stopMicros();
+            LOGGER.debug("[Bybit] Total message processed in {} us", totalMicros);
         } catch (Exception e) {
             errorCount.incrementAndGet();
             LOGGER.error("[Bybit] Failed to parse message", e);
