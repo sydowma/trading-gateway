@@ -29,6 +29,8 @@ public class OkxConnector implements ExchangeConnector {
 
     private final OkxMessageParser parser = new OkxMessageParser();
     private final FastCharOkxTickerParser fastCharTickerParser = new FastCharOkxTickerParser();
+    private final FastCharOkxTradeParser fastCharTradeParser = new FastCharOkxTradeParser();
+    private final FastCharOkxOrderBookParser fastCharOrderBookParser = new FastCharOkxOrderBookParser();
     private final ProcessingTimer processingTimer = new ProcessingTimer();
     private final AtomicLong messageCount = new AtomicLong(0);
     private final AtomicLong errorCount = new AtomicLong(0);
@@ -181,7 +183,7 @@ public class OkxConnector implements ExchangeConnector {
 
     private void onMessage(String message) {
         messageCount.incrementAndGet();
-        if (debugMsgCount < 3) {
+        if (debugMsgCount < 3 || message.contains("\"trades\"") || message.contains("\"books\"")) {
             System.err.println("[OKX] Message #" + (debugMsgCount + 1) + ": " + message.substring(0, Math.min(500, message.length())));
             debugMsgCount++;
         }
@@ -203,7 +205,7 @@ public class OkxConnector implements ExchangeConnector {
                 LOGGER.debug("[OKX] Ticker parsed in {} us", parseMicros);
             } else if (parser.isTrade(message)) {
                 ProcessingTimer.TimingContext parseTimer = processingTimer.start();
-                Trade trade = parser.parseTrade(message);
+                Trade trade = fastCharTradeParser.parseTrade(message);
                 long parseMicros = parseTimer.stopMicros();
 
                 if (trade != null && messageHandler != null) {
@@ -214,7 +216,7 @@ public class OkxConnector implements ExchangeConnector {
                 LOGGER.debug("[OKX] Trade parsed in {} us", parseMicros);
             } else if (parser.isOrderBook(message)) {
                 ProcessingTimer.TimingContext parseTimer = processingTimer.start();
-                OrderBook orderBook = parser.parseOrderBook(message);
+                OrderBook orderBook = fastCharOrderBookParser.parseOrderBook(message);
                 long parseMicros = parseTimer.stopMicros();
 
                 if (orderBook != null && messageHandler != null) {
